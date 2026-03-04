@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# i3kit-screenshot — Capture screenshot region, open Claude chat with image context
+set -euo pipefail
+
+timestamp="$(date +%s)"
+screenshot_path="/tmp/i3kit-screenshot-${timestamp}.png"
+
+# Capture screenshot region via flameshot
+flameshot gui --raw > "$screenshot_path" 2>/dev/null
+
+# If file is empty (user cancelled), silently exit
+if [[ ! -s "$screenshot_path" ]]; then
+    rm -f "$screenshot_path"
+    exit 0
+fi
+
+# Open interactive Claude chat with the screenshot as context
+i3kit screenshot "$screenshot_path"

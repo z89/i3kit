@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# i3kit — Main launcher for Claude Code in i3
+# Usage: i3kit [new|resume|screenshot|resume-id] [arg]
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/i3kit-common.sh"
+MODE="${1:-new}"
+ARG="${2:-}"
+
+# Load config
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/i3kit/i3kit.conf"
+if [[ -f "$CONFIG_FILE" ]]; then
+    source "$CONFIG_FILE"
+fi
+
+CLAUDE_FLAGS="${CLAUDE_FLAGS:-}"
+KITTY_WIDTH="${KITTY_WIDTH:-60ppt}"
+KITTY_HEIGHT="${KITTY_HEIGHT:-70ppt}"
+PYWAL_THEME="${PYWAL_THEME:-true}"
+SESSION_DIR="${SESSION_DIR:-$HOME/.local/share/i3kit}"
+NOTIFY_ON_EXIT="${NOTIFY_ON_EXIT:-true}"
+
+mkdir -p "$SESSION_DIR"
+
+# --- Build claude command ---
+build_claude_cmd() {
+    local mode="$1"
+    local arg="$2"
+    local cmd="claude"
+
+    case "$mode" in
+        new)
+            # Gather context and pass as appended system prompt
+            local context
+            context="$(context-gather.sh 2>/dev/null || true)"
+            if [[ -n "$context" ]]; then
+                cmd+=" --append-system-prompt $(printf '%q' "Here is the user's current system context:"$'\n'"${context}")"
+            fi
+            ;;
+        resume)
+            cmd+=" --continue"
+            ;;
+        screenshot)
+            cmd+=" --allowedTools 'Read(/tmp/*)'"
+            cmd+=" --append-system-prompt $(printf '%q' "The user has taken a screenshot. The screenshot is saved at: ${arg}. Confirm you have it and ask what they'd like you to do with it.")"
+            cmd+=" $(printf '%q' "I just took a screenshot at ${arg}. Read it.")"
+            ;;
+        resume-id)
+            cmd+=" --resume $(printf '%q' "$arg")"
+            ;;
+    esac
+
+    # Append any extra user-configured flags
+    if [[ -n "$CLAUDE_FLAGS" ]]; then
+        cmd+=" ${CLAUDE_FLAGS}"
+    fi
+
+    echo "$cmd"
+}
+
+# --- Launch kitty ---
+launch() {
+    local kitty_conf
+    kitty_conf="$(generate_kitty_conf)"
+
+    local claude_cmd
+    claude_cmd="$(build_claude_cmd "$MODE" "$ARG")"
+
+    # Append exit notification if enabled
+    local shell_cmd="$claude_cmd"
+    if [[ "$NOTIFY_ON_EXIT" == "true" ]]; then
+        shell_cmd+="; dunstify -a 'i3kit' -t 10000 'Claude' 'Session finished'"
+    fi
+
+    kitty --class i3kit \
+          --name i3kit \
+          --config "$kitty_conf" \
+          --title "i3kit" \
+          -e bash -c "$shell_cmd" &
+
+    disown
+}
+
+launch

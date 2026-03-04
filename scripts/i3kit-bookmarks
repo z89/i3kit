@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# i3kit-bookmarks — Save and resume Claude session bookmarks
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/i3kit-common.sh"
+
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/i3kit/i3kit.conf"
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+
+SESSION_DIR="${SESSION_DIR:-$HOME/.local/share/i3kit}"
+BOOKMARKS_FILE="$SESSION_DIR/bookmarks.tsv"
+
+mkdir -p "$SESSION_DIR"
+touch "$BOOKMARKS_FILE"
+
+ACTION="${1:-pick}"
+
+case "$ACTION" in
+    save)
+        # Find all session index files
+        session_files=()
+        while IFS= read -r -d '' f; do
+            session_files+=("$f")
+        done < <(find "$HOME/.claude/projects" -name "sessions-index.json" -print0 2>/dev/null)
+
+        if (( ${#session_files[@]} == 0 )); then
+            dunstify -a "i3kit" -t 5000 "Claude" "No sessions found"
+            exit 0
+        fi
+
+        # Build rofi list from all sessions across all projects
+        entries=()
+        while IFS= read -r -d '' index_file; do
+            project_dir="$(dirname "$index_file")"
+            # Each session-index.json is an array of objects with id, name, etc.
+            while IFS=$'\t' read -r sid sname; do
+                [[ -z "$sid" ]] && continue
+                label="${sname:-unnamed} (${project_dir##*/})"
+                entries+=("$label"$'\t'"$sid"$'\t'"$project_dir")
+            done < <(jq -r '.[] | [.id, (.name // "unnamed")] | @tsv' "$index_file" 2>/dev/null)
+        done < <(printf '%s\0' "${session_files[@]}")
+
+        if (( ${#entries[@]} == 0 )); then
+            dunstify -a "i3kit" -t 5000 "Claude" "No sessions found"
+            exit 0
+        fi
+
+        # Show session picker in rofi
+        rofi_list=""
+        for entry in "${entries[@]}"; do
+            label="${entry%%$'\t'*}"
+            rofi_list+="${label}"$'\n'
+        done
+        rofi_list="${rofi_list%$'\n'}"
+
+        selected="$(echo "$rofi_list" | rofi -dmenu -p "Bookmark session" -i -theme "$ROFI_THEME" 2>/dev/null)" || exit 0
+        [[ -z "$selected" ]] && exit 0
+
+        # Find matching entry
+        matched_sid=""
+        matched_project=""
+        for entry in "${entries[@]}"; do
+            label="${entry%%$'\t'*}"
+            if [[ "$label" == "$selected" ]]; then
+                rest="${entry#*$'\t'}"
+                matched_sid="${rest%%$'\t'*}"
+                matched_project="${rest#*$'\t'}"
+                break
+            fi
+        done
+
+        if [[ -z "$matched_sid" ]]; then
+            dunstify -a "i3kit" -t 5000 "Claude" "Session not found"
+            exit 1
+        fi
+
+        # Prompt for bookmark name
+        bookmark_name="$(rofi -dmenu -p "Bookmark name" -theme "$ROFI_THEME" -theme-str 'listview { enabled: false; }' 2>/dev/null)" || exit 0
+        [[ -z "$bookmark_name" ]] && bookmark_name="$selected"
+
+        # Save to bookmarks file (TSV: name, session-id, project-path, timestamp)
+        echo -e "${bookmark_name}\t${matched_sid}\t${matched_project}\t$(date -Iseconds)" >> "$BOOKMARKS_FILE"
+
+        dunstify -a "i3kit" -t 5000 "Claude" "Bookmarked: $bookmark_name"
+        ;;
+
+    pick)
+        if [[ ! -s "$BOOKMARKS_FILE" ]]; then
+            dunstify -a "i3kit" -t 5000 "Claude" "No bookmarks saved"
+            exit 0
+        fi
+
+        # Build rofi list from bookmarks
+        rofi_list=""
+        while IFS=$'\t' read -r name sid project ts; do
+            rofi_list+="${name}"$'\n'
+        done < "$BOOKMARKS_FILE"
+        rofi_list="${rofi_list%$'\n'}"
+
+        selected="$(echo "$rofi_list" | rofi -dmenu -p "Resume bookmark" -i -theme "$ROFI_THEME" 2>/dev/null)" || exit 0
+        [[ -z "$selected" ]] && exit 0
+
+        # Find matching bookmark
+        matched_sid=""
+        while IFS=$'\t' read -r name sid project ts; do
+            if [[ "$name" == "$selected" ]]; then
+                matched_sid="$sid"
+                break
+            fi
+        done < "$BOOKMARKS_FILE"
+
+        if [[ -z "$matched_sid" ]]; then
+            dunstify -a "i3kit" -t 5000 "Claude" "Bookmark not found"
+            exit 1
+        fi
+
+        # Resume the bookmarked session
+        i3kit resume-id "$matched_sid"
+        ;;
+
+    *)
+        echo "Usage: i3kit-bookmarks [pick|save]" >&2
+        exit 1
+        ;;
+esac

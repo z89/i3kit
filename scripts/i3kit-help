@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# i3kit-help — Show all i3kit keybindings in rofi
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/i3kit-common.sh"
+
+rofi -dmenu -p "i3kit shortcuts" -i -no-custom -theme "$ROFI_THEME" -theme-str 'listview { lines: 10; }' <<'EOF'
+$mod+a             New Claude chat (with context)
+$mod+Shift+a       Resume last Claude session
+$mod+g             Quick ask (rofi prompt)
+$mod+Shift+g       Explain selected text
+$mod+Mod1+g        Fix selected code → clipboard
+$mod+Print         Screenshot → Claude chat
+$mod+Shift+b       Resume bookmarked session
+$mod+Mod1+b        Save session bookmark
+$mod+F1            This help menu
+EOF
+
+exit 0

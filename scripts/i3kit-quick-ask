@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# i3kit-quick-ask — Rofi prompt → Claude answer → notification or popup
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/i3kit-common.sh"
+
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/i3kit/i3kit.conf"
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+
+NOTIFICATION_CHAR_LIMIT="${NOTIFICATION_CHAR_LIMIT:-300}"
+
+# Rofi text input (no list, just a text field)
+question="$(rofi -dmenu -p "Ask Claude" -theme "$ROFI_THEME" -theme-str 'listview { enabled: false; }' 2>/dev/null)" || exit 0
+[[ -z "$question" ]] && exit 0
+
+# Show thinking notification (replaceable via -r tag)
+dunstify -a "i3kit" -r 9999 -t 0 "Claude" "Thinking..."
+
+# Get answer from Claude
+answer="$(claude --print --model haiku "$question" 2>/dev/null)" || {
+    dunstify -a "i3kit" -r 9999 -t 5000 "Claude" "Error: failed to get response"
+    exit 1
+}
+
+# Close thinking notification
+dunstify -C 9999
+
+if [[ -z "$answer" ]]; then
+    dunstify -a "i3kit" -t 5000 "Claude" "No response received"
+    exit 0
+fi
+
+if (( ${#answer} <= NOTIFICATION_CHAR_LIMIT )); then
+    # Short answer → dunst notification
+    dunstify -a "i3kit" -t 15000 "Claude" "$answer"
+else
+    # Long answer → ephemeral floating kitty with less
+    local_file="/tmp/i3kit-answer-$$.txt"
+    echo "$answer" > "$local_file"
+    local kitty_conf
+    kitty_conf="$(generate_kitty_conf)"
+    kitty --class i3kit-popup \
+          --name i3kit-popup \
+          --config "$kitty_conf" \
+          --title "Claude Answer" \
+          -e bash -c "less '$local_file'; rm -f '$local_file'" &
+    disown
+fi

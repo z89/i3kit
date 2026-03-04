@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# i3kit-fix — Fix selected code via Claude, copy result to clipboard
+set -euo pipefail
+
+# Grab primary selection (highlighted text)
+selection="$(xclip -selection primary -o 2>/dev/null)" || selection=""
+
+if [[ -z "$selection" ]]; then
+    dunstify -a "i3kit" -t 3000 "Claude" "No text selected"
+    exit 0
+fi
+
+# Show thinking notification
+dunstify -a "i3kit" -r 9999 -t 0 "Claude" "Fixing code..."
+
+# Get fixed code from Claude
+fixed="$(claude --print "Fix this code. Output ONLY the corrected code with no explanation, no markdown fences:" <<< "$selection" 2>/dev/null)" || {
+    dunstify -a "i3kit" -r 9999 -t 5000 "Claude" "Error: failed to get response"
+    exit 1
+}
+
+# Close thinking notification
+dunstify -C 9999
+
+if [[ -z "$fixed" ]]; then
+    dunstify -a "i3kit" -t 5000 "Claude" "No response received"
+    exit 0
+fi
+
+# Copy fixed code to system clipboard
+echo -n "$fixed" | xclip -selection clipboard
+
+dunstify -a "i3kit" -t 5000 "Claude" "Code fixed — copied to clipboard"

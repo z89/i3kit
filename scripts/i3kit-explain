@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# i3kit-explain — Explain selected text via Claude
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/i3kit-common.sh"
+
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/i3kit/i3kit.conf"
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
+
+NOTIFICATION_CHAR_LIMIT="${NOTIFICATION_CHAR_LIMIT:-300}"
+
+# Grab primary selection (highlighted text)
+selection="$(xclip -selection primary -o 2>/dev/null)" || selection=""
+
+if [[ -z "$selection" ]]; then
+    dunstify -a "i3kit" -t 3000 "Claude" "No text selected"
+    exit 0
+fi
+
+# Show thinking notification
+dunstify -a "i3kit" -r 9999 -t 0 "Claude" "Explaining..."
+
+# Get explanation from Claude
+answer="$(claude --print "Explain this concisely:" <<< "$selection" 2>/dev/null)" || {
+    dunstify -a "i3kit" -r 9999 -t 5000 "Claude" "Error: failed to get response"
+    exit 1
+}
+
+# Close thinking notification
+dunstify -C 9999
+
+if [[ -z "$answer" ]]; then
+    dunstify -a "i3kit" -t 5000 "Claude" "No response received"
+    exit 0
+fi
+
+if (( ${#answer} <= NOTIFICATION_CHAR_LIMIT )); then
+    dunstify -a "i3kit" -t 15000 "Claude" "$answer"
+else
+    local_file="/tmp/i3kit-answer-$$.txt"
+    echo "$answer" > "$local_file"
+    local kitty_conf
+    kitty_conf="$(generate_kitty_conf)"
+    kitty --class i3kit-popup \
+          --name i3kit-popup \
+          --config "$kitty_conf" \
+          --title "Claude Explanation" \
+          -e bash -c "less '$local_file'; rm -f '$local_file'" &
+    disown
+fi
